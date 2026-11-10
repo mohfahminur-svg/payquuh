@@ -1,0 +1,78 @@
+const CACHE_NAME = 'payqu-cache-v8';
+const STATIC_ASSETS = [
+  './',
+  './index.html',
+  './manifest.json',
+  './exceljs.min.js',
+  './app.js',
+  './payqu-192.png',
+  './payqu-512.png'
+];
+
+// Install event - pre-cache core assets
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => {
+      return cache.addAll(STATIC_ASSETS).catch((err) => {
+        console.warn('Pre-cache warning:', err);
+      });
+    }).then(() => self.skipWaiting())
+  );
+});
+
+// Activate event - clean up old caches
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys().then((keys) => {
+      return Promise.all(
+        keys.map((key) => {
+          if (key !== CACHE_NAME) {
+            return caches.delete(key);
+          }
+        })
+      );
+    }).then(() => self.clients.claim())
+  );
+});
+
+// Fetch event - offline-first strategy
+self.addEventListener('fetch', (event) => {
+  // Only handle GET requests
+  if (event.request.method !== 'GET') return;
+
+  const url = new URL(event.request.url);
+
+  // If local static asset, try cache first, fallback to network
+  if (url.origin === self.location.origin) {
+    event.respondWith(
+      caches.match(event.request).then((cached) => {
+        if (cached) return cached;
+        return fetch(event.request).then((response) => {
+          if (response && response.status === 200) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
+          return response;
+        });
+      })
+    );
+    return;
+  }
+
+  // For external assets (Google Fonts, Tailwind CDN, etc.)
+  event.respondWith(
+    caches.match(event.request).then((cached) => {
+      const fetchPromise = fetch(event.request)
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            const clone = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
+          return networkResponse;
+        })
+        .catch(() => cached);
+
+      return cached || fetchPromise;
+    })
+  );
+});
